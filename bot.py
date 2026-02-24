@@ -9,15 +9,14 @@ from telegram.ext import (
 )
 
 # =========================
-# CONFIGURATION
+# 🔧 CONFIG
 # =========================
 
-BOT_TOKEN = "8397177689:AAExBLtRkzn7uZlWxkU_jz0ZpUrMdqonZY8"   # <-- REPLACE THIS
+BOT_TOKEN = "PASTE_YOUR_NEW_FULL_TOKEN_HERE"
 CHANNEL_ID = -1002565325480
-ADMIN_ID = 206193281
 
 # =========================
-# INIT APP
+# 🚀 INIT
 # =========================
 
 app = ApplicationBuilder().token(BOT_TOKEN).build()
@@ -33,19 +32,10 @@ CREATE TABLE IF NOT EXISTS users (
 conn.commit()
 
 # =========================
-# GENERATE LINK (ADMIN ONLY)
+# 🔹 GENERATE LINK
 # =========================
 
 async def generate(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    # Only allow you
-    if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("❌ Not authorized.")
-        return
-
-    # Only allow in private chat
-    if update.effective_chat.type != "private":
-        return
 
     link = await context.bot.create_chat_invite_link(
         chat_id=CHANNEL_ID,
@@ -57,7 +47,7 @@ async def generate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 # =========================
-# TRACK NEW MEMBER (1 DAY EXPIRY)
+# 🔹 TRACK NEW MEMBERS
 # =========================
 
 async def track_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -74,7 +64,7 @@ async def track_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.commit()
 
 # =========================
-# REMOVE EXPIRED USERS
+# 🔹 REMOVE EXPIRED USERS
 # =========================
 
 async def remove_expired(context: ContextTypes.DEFAULT_TYPE):
@@ -99,35 +89,19 @@ async def remove_expired(context: ContextTypes.DEFAULT_TYPE):
             conn.commit()
 
 # =========================
-# CHECK ACTIVE USERS
-# =========================
-
-async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    if update.effective_user.id != ADMIN_ID:
-        return
-
-    c.execute("SELECT COUNT(*) FROM users")
-    total = c.fetchone()[0]
-
-    await update.message.reply_text(f"📊 Active Subscribers: {total}")
-
-# =========================
-# HANDLERS
+# 🔹 HANDLERS
 # =========================
 
 app.add_handler(CommandHandler("generate", generate))
-app.add_handler(CommandHandler("stats", stats))
 app.add_handler(ChatMemberHandler(track_member, ChatMemberHandler.CHAT_MEMBER))
 
-# Daily cleanup at 1 AM
 app.job_queue.run_daily(
     remove_expired,
     time=datetime.strptime("01:00", "%H:%M").time()
 )
 
 # =========================
-# START BOT
+# ▶ START
 # =========================
 
 app.run_polling()
