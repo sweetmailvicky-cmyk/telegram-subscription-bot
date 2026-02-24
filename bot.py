@@ -25,7 +25,15 @@ conn.commit()
 # 🔒 Generate 1 Day Invite Link (ONLY YOU)
 async def generate(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    if update.effective_user.id != ADMIN_ID:
+    async def generate(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    # Must be YOU
+    if update.effective_user.id != 206193281:
+        await update.message.reply_text("Not authorized.")
+        return
+
+    # Must be private chat only
+    if update.effective_chat.type != "private":
         return
 
     expire = datetime.now() + timedelta(days=1)
@@ -69,3 +77,4 @@ app.add_handler(ChatMemberHandler(track_member, ChatMemberHandler.CHAT_MEMBER))
 app.job_queue.run_daily(remove_expired, time=datetime.strptime("01:00", "%H:%M").time())
 
 app.run_polling()
+
