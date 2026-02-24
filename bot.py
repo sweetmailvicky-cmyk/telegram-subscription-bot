@@ -15,14 +15,14 @@ conn.commit()
 
 # Generate 1 month invite link
 async def generate(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    expire = datetime.now() + timedelta(days=30)
+    expire = datetime.now() + timedelta(days=1)
 
     link = await context.bot.create_chat_invite_link(
         chat_id=CHANNEL_ID,
         member_limit=1
     )
 
-    await update.message.reply_text(f"1 Month Channel Link:\n{link.invite_link}")
+    await update.message.reply_text(f"1 Day Channel Link:\n{link.invite_link}")
 
 # Track new subscribers
 async def track_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -51,5 +51,6 @@ app.add_handler(CommandHandler("generate", generate))
 app.add_handler(ChatMemberHandler(track_member, ChatMemberHandler.CHAT_MEMBER))
 
 app.job_queue.run_daily(remove_expired, time=datetime.strptime("01:00","%H:%M").time())
+
 
 app.run_polling()
