@@ -1,4 +1,3 @@
-import os
 import sqlite3
 from datetime import datetime, timedelta
 from telegram import Update
@@ -13,19 +12,24 @@ from telegram.ext import (
 # CONFIGURATION
 # =========================
 
-BOT_TOKEN = os.getenv("8397177689:AAExBLtRkzn7uZlWxkU_jz0ZpUrMdqonZY8")   # Set in Railway Variables
-CHANNEL_ID = -1002565325480          # Your private channel ID
-ADMIN_ID = 206193281                 # Your Telegram ID
+BOT_TOKEN = "8397177689:AAExBLtRkzn7uZlWxkU_jz0ZpUrMdqonZY8"   # <-- REPLACE THIS
+CHANNEL_ID = -1002565325480
+ADMIN_ID = 206193281
 
 # =========================
-# APP INIT
+# INIT APP
 # =========================
 
 app = ApplicationBuilder().token(BOT_TOKEN).build()
 
 conn = sqlite3.connect("members.db")
 c = conn.cursor()
-c.execute("CREATE TABLE IF NOT EXISTS users (user_id TEXT, expiry TEXT)")
+c.execute("""
+CREATE TABLE IF NOT EXISTS users (
+    user_id TEXT PRIMARY KEY,
+    expiry TEXT
+)
+""")
 conn.commit()
 
 # =========================
@@ -34,7 +38,7 @@ conn.commit()
 
 async def generate(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    # Allow only you
+    # Only allow you
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("❌ Not authorized.")
         return
@@ -61,16 +65,16 @@ async def track_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.chat_member.new_chat_member.status == "member":
 
         user_id = update.chat_member.new_chat_member.user.id
-        expiry = datetime.now() + timedelta(days=1)
+        expiry_time = datetime.now() + timedelta(days=1)
 
         c.execute(
             "INSERT OR REPLACE INTO users VALUES (?, ?)",
-            (user_id, expiry.strftime("%Y-%m-%d %H:%M:%S"))
+            (user_id, expiry_time.strftime("%Y-%m-%d %H:%M:%S"))
         )
         conn.commit()
 
 # =========================
-# REMOVE EXPIRED USERS (DAILY)
+# REMOVE EXPIRED USERS
 # =========================
 
 async def remove_expired(context: ContextTypes.DEFAULT_TYPE):
@@ -95,7 +99,7 @@ async def remove_expired(context: ContextTypes.DEFAULT_TYPE):
             conn.commit()
 
 # =========================
-# OPTIONAL: CHECK ACTIVE USERS
+# CHECK ACTIVE USERS
 # =========================
 
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -116,7 +120,7 @@ app.add_handler(CommandHandler("generate", generate))
 app.add_handler(CommandHandler("stats", stats))
 app.add_handler(ChatMemberHandler(track_member, ChatMemberHandler.CHAT_MEMBER))
 
-# Daily cleanup at 1AM
+# Daily cleanup at 1 AM
 app.job_queue.run_daily(
     remove_expired,
     time=datetime.strptime("01:00", "%H:%M").time()
