@@ -9,14 +9,15 @@ from telegram.ext import (
 )
 
 # =========================
-# 🔧 CONFIG
+# CONFIGURATION
 # =========================
 
 BOT_TOKEN = "8453765782:AAENJEsrojZ2Dy-VwrCeU2vTFjBUof4G4oQ"
 CHANNEL_ID = -1002565325480
+ADMIN_ID = 206193281
 
 # =========================
-# 🚀 INIT
+# INIT
 # =========================
 
 app = ApplicationBuilder().token(BOT_TOKEN).build()
@@ -32,10 +33,23 @@ CREATE TABLE IF NOT EXISTS users (
 conn.commit()
 
 # =========================
-# 🔹 GENERATE LINK
+# GENERATE LINK (STRICT LOCK)
 # =========================
 
 async def generate(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    user_id = update.effective_user.id
+    chat_type = update.effective_chat.type
+
+    # Allow only admin ID
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ You are not authorized to use this command.")
+        return
+
+    # Allow only in private chat
+    if chat_type != "private":
+        await update.message.reply_text("❌ Use this command in private chat only.")
+        return
 
     link = await context.bot.create_chat_invite_link(
         chat_id=CHANNEL_ID,
@@ -47,7 +61,7 @@ async def generate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 # =========================
-# 🔹 TRACK NEW MEMBERS
+# TRACK NEW MEMBER (1 DAY EXPIRY)
 # =========================
 
 async def track_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -64,7 +78,7 @@ async def track_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.commit()
 
 # =========================
-# 🔹 REMOVE EXPIRED USERS
+# REMOVE EXPIRED USERS
 # =========================
 
 async def remove_expired(context: ContextTypes.DEFAULT_TYPE):
@@ -89,7 +103,7 @@ async def remove_expired(context: ContextTypes.DEFAULT_TYPE):
             conn.commit()
 
 # =========================
-# 🔹 HANDLERS
+# HANDLERS
 # =========================
 
 app.add_handler(CommandHandler("generate", generate))
@@ -101,9 +115,7 @@ app.job_queue.run_daily(
 )
 
 # =========================
-# ▶ START
+# START
 # =========================
 
 app.run_polling()
-
-
