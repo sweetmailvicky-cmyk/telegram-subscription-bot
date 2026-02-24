@@ -1,10 +1,19 @@
-from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, ChatMemberHandler
-from datetime import datetime, timedelta
+import os
 import sqlite3
+from datetime import datetime, timedelta
+from telegram import Update
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    ContextTypes,
+    ChatMemberHandler,
+)
 
-BOT_TOKEN = "8453765782:AAEZU4wmKuwU6pUE9fA-lw0G-2khvkS2t2k"
+# Railway Environment Variable
+BOT_TOKEN = 8453765782:AAEZU4wmKuwU6pUE9fA-lw0G-2khvkS2t2k
+
 CHANNEL_ID = -1002565325480
+ADMIN_ID = 206193281   # Your Telegram ID
 
 app = ApplicationBuilder().token(BOT_TOKEN).build()
 
@@ -13,8 +22,12 @@ c = conn.cursor()
 c.execute("CREATE TABLE IF NOT EXISTS users (user_id TEXT, expiry TEXT)")
 conn.commit()
 
-# Generate 1 month invite link
+# 🔒 Generate 1 Day Invite Link (ONLY YOU)
 async def generate(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if update.effective_user.id != ADMIN_ID:
+        return
+
     expire = datetime.now() + timedelta(days=1)
 
     link = await context.bot.create_chat_invite_link(
@@ -24,17 +37,19 @@ async def generate(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(f"1 Day Channel Link:\n{link.invite_link}")
 
-# Track new subscribers
+
+# Track New Subscriber (1 Day Expiry)
 async def track_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.chat_member.new_chat_member.status == "member":
         user_id = update.chat_member.new_chat_member.user.id
-        expiry = datetime.now() + timedelta(days=30)
+        expiry = datetime.now() + timedelta(days=1)
 
         c.execute("INSERT INTO users VALUES (?, ?)",
                   (user_id, expiry.strftime("%Y-%m-%d")))
         conn.commit()
 
-# Remove expired users
+
+# Remove Expired Users Daily
 async def remove_expired(context: ContextTypes.DEFAULT_TYPE):
     today = datetime.now().strftime("%Y-%m-%d")
 
@@ -47,10 +62,10 @@ async def remove_expired(context: ContextTypes.DEFAULT_TYPE):
         c.execute("DELETE FROM users WHERE user_id=?", (user[0],))
         conn.commit()
 
+
 app.add_handler(CommandHandler("generate", generate))
 app.add_handler(ChatMemberHandler(track_member, ChatMemberHandler.CHAT_MEMBER))
 
-app.job_queue.run_daily(remove_expired, time=datetime.strptime("01:00","%H:%M").time())
-
+app.job_queue.run_daily(remove_expired, time=datetime.strptime("01:00", "%H:%M").time())
 
 app.run_polling()
