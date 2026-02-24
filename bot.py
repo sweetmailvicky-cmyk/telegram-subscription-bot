@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS users (
 conn.commit()
 
 # =========================
-# GENERATE LINK (STRICT LOCK)
+# GENERATE LINK (ADMIN ONLY)
 # =========================
 
 async def generate(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -41,12 +41,10 @@ async def generate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     chat_type = update.effective_chat.type
 
-    # Allow only admin ID
     if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ You are not authorized to use this command.")
+        await update.message.reply_text("❌ Not authorized.")
         return
 
-    # Allow only in private chat
     if chat_type != "private":
         await update.message.reply_text("❌ Use this command in private chat only.")
         return
@@ -61,7 +59,7 @@ async def generate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 # =========================
-# TRACK NEW MEMBER (1 DAY EXPIRY)
+# TRACK NEW MEMBER
 # =========================
 
 async def track_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -103,12 +101,78 @@ async def remove_expired(context: ContextTypes.DEFAULT_TYPE):
             conn.commit()
 
 # =========================
+# STATS
+# =========================
+
+async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    c.execute("SELECT COUNT(*) FROM users")
+    total = c.fetchone()[0]
+
+    await update.message.reply_text(f"📊 Active Subscribers: {total}")
+
+# =========================
+# FULL EXPIRY LIST
+# =========================
+
+async def expiry_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    c.execute("SELECT user_id, expiry FROM users ORDER BY expiry ASC")
+    rows = c.fetchall()
+
+    if not rows:
+        await update.message.reply_text("No active users.")
+        return
+
+    message = "📅 Expiry List:\n\n"
+
+    for user_id, expiry in rows:
+        message += f"ID: {user_id}\nExpires: {expiry}\n\n"
+
+    await update.message.reply_text(message[:4000])
+
+# =========================
+# TODAY EXPIRY
+# =========================
+
+async def expires_today(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    c.execute("SELECT user_id, expiry FROM users WHERE expiry LIKE ?", (today + "%",))
+    rows = c.fetchall()
+
+    if not rows:
+        await update.message.reply_text("No expiries today.")
+        return
+
+    message = "⚠️ Expiring Today:\n\n"
+
+    for user_id, expiry in rows:
+        message += f"ID: {user_id}\nTime: {expiry}\n\n"
+
+    await update.message.reply_text(message[:4000])
+
+# =========================
 # HANDLERS
 # =========================
 
 app.add_handler(CommandHandler("generate", generate))
+app.add_handler(CommandHandler("stats", stats))
+app.add_handler(CommandHandler("expiry", expiry_list))
+app.add_handler(CommandHandler("today", expires_today))
 app.add_handler(ChatMemberHandler(track_member, ChatMemberHandler.CHAT_MEMBER))
 
+# Daily cleanup
 app.job_queue.run_daily(
     remove_expired,
     time=datetime.strptime("01:00", "%H:%M").time()
@@ -119,4 +183,3 @@ app.job_queue.run_daily(
 # =========================
 
 app.run_polling()
-
