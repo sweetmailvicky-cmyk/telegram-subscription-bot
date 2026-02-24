@@ -9,7 +9,7 @@ from telegram.ext import (
 )
 
 # =========================
-# CONFIGURATION
+# CONFIG
 # =========================
 
 BOT_TOKEN = "8453765782:AAENJEsrojZ2Dy-VwrCeU2vTFjBUof4G4oQ"
@@ -38,15 +38,12 @@ conn.commit()
 
 async def generate(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    user_id = update.effective_user.id
-    chat_type = update.effective_chat.type
-
-    if user_id != ADMIN_ID:
+    if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("❌ Not authorized.")
         return
 
-    if chat_type != "private":
-        await update.message.reply_text("❌ Use this command in private chat only.")
+    if update.effective_chat.type != "private":
+        await update.message.reply_text("❌ Use in private chat only.")
         return
 
     link = await context.bot.create_chat_invite_link(
@@ -59,12 +56,22 @@ async def generate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 # =========================
-# TRACK NEW MEMBER
+# TRACK CHANNEL MEMBER JOIN
 # =========================
 
 async def track_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    if update.chat_member.new_chat_member.status == "member":
+    chat = update.chat_member.chat
+
+    # Make sure event is from your channel
+    if chat.id != CHANNEL_ID:
+        return
+
+    old_status = update.chat_member.old_chat_member.status
+    new_status = update.chat_member.new_chat_member.status
+
+    # Detect real join
+    if old_status in ["left", "kicked"] and new_status == "member":
 
         user_id = update.chat_member.new_chat_member.user.id
         expiry_time = datetime.now() + timedelta(days=1)
@@ -101,7 +108,7 @@ async def remove_expired(context: ContextTypes.DEFAULT_TYPE):
             conn.commit()
 
 # =========================
-# STATS
+# ADMIN COMMANDS
 # =========================
 
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -113,10 +120,6 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     total = c.fetchone()[0]
 
     await update.message.reply_text(f"📊 Active Subscribers: {total}")
-
-# =========================
-# FULL EXPIRY LIST
-# =========================
 
 async def expiry_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
@@ -136,10 +139,6 @@ async def expiry_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
         message += f"ID: {user_id}\nExpires: {expiry}\n\n"
 
     await update.message.reply_text(message[:4000])
-
-# =========================
-# TODAY EXPIRY
-# =========================
 
 async def expires_today(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
@@ -172,7 +171,7 @@ app.add_handler(CommandHandler("expiry", expiry_list))
 app.add_handler(CommandHandler("today", expires_today))
 app.add_handler(ChatMemberHandler(track_member, ChatMemberHandler.CHAT_MEMBER))
 
-# Daily cleanup
+# Daily cleanup at 1AM
 app.job_queue.run_daily(
     remove_expired,
     time=datetime.strptime("01:00", "%H:%M").time()
