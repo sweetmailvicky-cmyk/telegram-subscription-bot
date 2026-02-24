@@ -12,7 +12,7 @@ from telegram.ext import (
 # 🔧 CONFIG
 # =========================
 
-BOT_TOKEN = "8397177689:AAHRwMjjQ9xAxaOLda47lVXfli9u0kQoMGI"
+BOT_TOKEN = "8453765782:AAENJEsrojZ2Dy-VwrCeU2vTFjBUof4G4oQ"
 CHANNEL_ID = -1002565325480
 
 # =========================
@@ -105,4 +105,5 @@ app.job_queue.run_daily(
 # =========================
 
 app.run_polling()
+
 
