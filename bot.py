@@ -1,16 +1,25 @@
 import sqlite3
 from datetime import datetime, timedelta
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     ContextTypes,
+    CallbackQueryHandler,
     ChatMemberHandler,
 )
+
+# =========================
+# CONFIG
+# =========================
 
 BOT_TOKEN = "8453765782:AAENJEsrojZ2Dy-VwrCeU2vTFjBUof4G4oQ"
 CHANNEL_ID = -1002565325480
 ADMIN_ID = 206193281
+
+# =========================
+# INIT
+# =========================
 
 app = ApplicationBuilder().token(BOT_TOKEN).build()
 
@@ -34,31 +43,65 @@ CREATE TABLE IF NOT EXISTS links (
 conn.commit()
 
 # =========================
-# GENERATE LINK
+# START COMMAND (SHOW BUTTONS)
 # =========================
 
-async def generate(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("❌ Not authorized.")
+        await update.message.reply_text("Bot ready.")
         return
 
-    if update.effective_chat.type != "private":
-        await update.message.reply_text("❌ Use in private chat only.")
+    keyboard = [
+        [InlineKeyboardButton("🔘 Generate 1 Day Link", callback_data="generate")],
+        [InlineKeyboardButton("📊 View Stats", callback_data="stats")]
+    ]
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await update.message.reply_text(
+        "Select an option:",
+        reply_markup=reply_markup
+    )
+
+# =========================
+# BUTTON HANDLER
+# =========================
+
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    query = update.callback_query
+    await query.answer()
+
+    if update.effective_user.id != ADMIN_ID:
+        await query.edit_message_text("❌ Not authorized.")
         return
 
-    link = await context.bot.create_chat_invite_link(
-        chat_id=CHANNEL_ID,
-        member_limit=1
-    )
+    if query.data == "generate":
 
-    c.execute(
-        "INSERT INTO links VALUES (?, ?)",
-        (link.invite_link, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-    )
-    conn.commit()
+        link = await context.bot.create_chat_invite_link(
+            chat_id=CHANNEL_ID,
+            member_limit=1
+        )
 
-    await update.message.reply_text(f"✅ 1 Day Link:\n{link.invite_link}")
+        c.execute(
+            "INSERT INTO links VALUES (?, ?)",
+            (link.invite_link, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        )
+        conn.commit()
+
+        await query.edit_message_text(
+            f"✅ 1 Day Link:\n{link.invite_link}"
+        )
+
+    elif query.data == "stats":
+
+        c.execute("SELECT COUNT(*) FROM users")
+        total = c.fetchone()[0]
+
+        await query.edit_message_text(
+            f"📊 Active Subscribers: {total}"
+        )
 
 # =========================
 # TRACK MEMBER USING INVITE LINK
@@ -119,25 +162,11 @@ async def remove_expired(context: ContextTypes.DEFAULT_TYPE):
             conn.commit()
 
 # =========================
-# STATS
-# =========================
-
-async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    if update.effective_user.id != ADMIN_ID:
-        return
-
-    c.execute("SELECT COUNT(*) FROM users")
-    total = c.fetchone()[0]
-
-    await update.message.reply_text(f"📊 Active Subscribers: {total}")
-
-# =========================
 # HANDLERS
 # =========================
 
-app.add_handler(CommandHandler("generate", generate))
-app.add_handler(CommandHandler("stats", stats))
+app.add_handler(CommandHandler("start", start))
+app.add_handler(CallbackQueryHandler(button_handler))
 app.add_handler(ChatMemberHandler(track_member, ChatMemberHandler.CHAT_MEMBER))
 
 app.job_queue.run_daily(
