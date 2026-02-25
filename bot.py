@@ -43,17 +43,17 @@ CREATE TABLE IF NOT EXISTS links (
 conn.commit()
 
 # =========================
-# START COMMAND (SHOW BUTTONS)
+# START - SHOW BUTTONS
 # =========================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("❌ You are not authorized to use this command.")
+        await update.message.reply_text("Bot is active.")
         return
 
     keyboard = [
-        [InlineKeyboardButton("🔘 Generate 1 Day Link", callback_data="generate")],
+        [InlineKeyboardButton("🔘 Generate 30 Min Link", callback_data="generate")],
         [InlineKeyboardButton("📊 View Stats", callback_data="stats")]
     ]
 
@@ -91,7 +91,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.commit()
 
         await query.edit_message_text(
-            f"✅ 1 Day Link:\n{link.invite_link}"
+            f"✅ 30 Minute Link:\n{link.invite_link}"
         )
 
     elif query.data == "stats":
@@ -104,7 +104,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 # =========================
-# TRACK MEMBER USING INVITE LINK
+# TRACK MEMBER JOIN
 # =========================
 
 async def track_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -126,7 +126,9 @@ async def track_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             if result:
                 user_id = member.user.id
-                expiry_time = datetime.now() + timedelta(days=1)
+
+                # 30 Minute Expiry
+                expiry_time = datetime.now() + timedelta(minutes=30)
 
                 c.execute(
                     "INSERT OR REPLACE INTO users VALUES (?, ?)",
@@ -169,10 +171,11 @@ app.add_handler(CommandHandler("start", start))
 app.add_handler(CallbackQueryHandler(button_handler))
 app.add_handler(ChatMemberHandler(track_member, ChatMemberHandler.CHAT_MEMBER))
 
-app.job_queue.run_daily(
+# 🔥 Check every 60 seconds
+app.job_queue.run_repeating(
     remove_expired,
-    time=datetime.strptime("01:00", "%H:%M").time()
+    interval=60,
+    first=10
 )
 
 app.run_polling()
-
