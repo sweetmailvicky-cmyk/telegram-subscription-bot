@@ -153,7 +153,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info("/start from user_id=%s", update.effective_user.id)
 
     if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("Bot is active.")
+        await update.message.reply_text("❌ You are not authorized to use this command.")
         return
 
     keyboard = [
@@ -326,3 +326,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
