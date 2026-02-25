@@ -49,7 +49,7 @@ conn.commit()
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("Bot ready.")
+        await update.message.reply_text("❌ You are not authorized to use this command.")
         return
 
     keyboard = [
@@ -175,3 +175,4 @@ app.job_queue.run_daily(
 )
 
 app.run_polling()
+
