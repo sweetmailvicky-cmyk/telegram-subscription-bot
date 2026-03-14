@@ -273,7 +273,7 @@ async def create_and_send_link(bot, chat_id: int, days: int, message_editor=None
     reply = (
         f"✅ *Invite Link — {days} Day(s)*\n\n"
         f"`{link_obj.invite_link}`\n\n"
-        f"⏰ Expires: `{fmt_ist(expire_date)}`\n"
+        f"⏰ Your Expires on : `{fmt_ist(expire_date)}`\n"
         f"👤 Single-use only"
     )
     if message_editor:
