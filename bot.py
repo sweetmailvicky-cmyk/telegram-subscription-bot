@@ -4,6 +4,7 @@ import logging
 import asyncio
 import aiosqlite
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -35,6 +36,23 @@ ADMIN_ID   = 206193281
 REMINDER_DAYS_BEFORE = [3, 1]  # Sends reminder 3 days before AND 1 day before
 
 DB_PATH = "members.db"
+
+IST = ZoneInfo("Asia/Kolkata")
+FMT = "%Y-%m-%d %H:%M:%S"
+
+
+def now_ist() -> datetime:
+    """Current time in IST (timezone-aware)."""
+    return datetime.now(tz=IST)
+
+
+def fmt_ist(dt: datetime) -> str:
+    """Format a datetime as IST string, converting from UTC if needed."""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=IST)
+    else:
+        dt = dt.astimezone(IST)
+    return dt.strftime(FMT) + " IST"
 
 
 # ──────────────────────────────────────────────────
@@ -86,8 +104,8 @@ async def db_add_link(invite_link: str, expire_date: datetime):
         await db.execute(
             "INSERT OR REPLACE INTO links(invite_link,created_at,expire_date) VALUES(?,?,?)",
             (invite_link,
-             datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-             expire_date.strftime("%Y-%m-%d %H:%M:%S"))
+             now_ist().strftime(FMT),
+             fmt_ist(expire_date))
         )
         await db.commit()
 
@@ -113,8 +131,8 @@ async def db_add_user(user_id: int, username: str, expiry: datetime):
                VALUES(?,?,?,?,0)""",
             (user_id,
              username or "unknown",
-             datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-             expiry.strftime("%Y-%m-%d %H:%M:%S"))
+             now_ist().strftime(FMT),
+             fmt_ist(expiry))
         )
         await db.execute(
             "UPDATE stats SET value=value+1 WHERE key='total_joins'"
@@ -125,7 +143,7 @@ async def db_add_user(user_id: int, username: str, expiry: datetime):
 
 
 async def db_get_expired_users():
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    now_str = now_ist().strftime(FMT)
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute(
             "SELECT user_id, username FROM users WHERE expiry<=? AND removed=0",
@@ -164,7 +182,7 @@ async def db_get_users_expiring_soon():
     Returns active users whose expiry falls within the next REMINDER_DAYS_BEFORE window,
     along with how many days are left (approximate).
     """
-    now = datetime.now()
+    now = now_ist()
     results = []
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute(
@@ -173,7 +191,8 @@ async def db_get_users_expiring_soon():
             rows = await cur.fetchall()
 
         for user_id, username, expiry_str in rows:
-            expiry = datetime.strptime(expiry_str, "%Y-%m-%d %H:%M:%S")
+            expiry_raw = expiry_str.replace(" IST", "")
+            expiry = datetime.strptime(expiry_raw, FMT).replace(tzinfo=IST)
             days_left = (expiry - now).days  # integer floor
 
             for days_before in REMINDER_DAYS_BEFORE:
@@ -225,7 +244,7 @@ async def create_and_send_link(bot, chat_id: int, days: int, message_editor=None
     - message_editor: async callable(text, parse_mode) — used when editing an existing message
     - text_sender:    async callable(text, parse_mode) — used when sending a new message
     """
-    expire_date = datetime.now() + timedelta(days=days)
+    expire_date = now_ist() + timedelta(days=days)
     try:
         link_obj = await bot.create_chat_invite_link(
             chat_id=CHANNEL_ID,
@@ -246,7 +265,7 @@ async def create_and_send_link(bot, chat_id: int, days: int, message_editor=None
     reply = (
         f"✅ *Invite Link — {days} Day(s)*\n\n"
         f"`{link_obj.invite_link}`\n\n"
-        f"⏰ Expires: `{expire_date.strftime('%Y-%m-%d %H:%M:%S')}`\n"
+        f"⏰ Expires: `{fmt_ist(expire_date)}`\n"
         f"👤 Single-use only"
     )
     if message_editor:
@@ -355,10 +374,10 @@ async def track_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if row:
         # Use the link's expiry as the member's membership expiry
-        expiry = datetime.strptime(row[0], "%Y-%m-%d %H:%M:%S")
+        expiry = datetime.strptime(row[0].replace(" IST", ""), FMT).replace(tzinfo=IST)
     else:
         # Fallback: shouldn't happen, but default to 30 days
-        expiry = datetime.now() + timedelta(days=30)
+        expiry = now_ist() + timedelta(days=30)
 
     await db_add_user(user.id, user.username, expiry)
     await db_remove_link(link_str)
@@ -372,7 +391,7 @@ async def track_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"👤 {user.full_name}\n"
             f"🆔 `{user.id}`\n"
             f"📛 @{user.username or 'N/A'}\n"
-            f"⏰ Removes at: `{expiry.strftime('%Y-%m-%d %H:%M:%S')}`",
+            f"⏰ Removes at: `{fmt_ist(expiry)}`",
             parse_mode="Markdown",
         )
     except Exception as e:
@@ -426,7 +445,7 @@ async def send_expiry_reminders(context: ContextTypes.DEFAULT_TYPE):
                 f"⚠️ *Expiry Reminder*\n\n"
                 f"👤 @{username or 'N/A'}\n"
                 f"🆔 `{user_id}`\n"
-                f"📅 Expires: `{expiry.strftime('%Y-%m-%d %H:%M:%S')}`\n"
+                f"📅 Expires: `{fmt_ist(expiry)}`\n"
                 f"⏳ *{days_before} day(s) remaining*",
                 parse_mode="Markdown",
             )
