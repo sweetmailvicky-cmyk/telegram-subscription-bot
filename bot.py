@@ -12,9 +12,6 @@ from telegram.ext import (
     ContextTypes,
     CallbackQueryHandler,
     ChatMemberHandler,
-    ConversationHandler,
-    MessageHandler,
-    filters,
 )
 
 # ==================================================
@@ -38,10 +35,6 @@ ADMIN_ID   = 206193281
 REMINDER_DAYS_BEFORE = [3, 1]  # Sends reminder 3 days before AND 1 day before
 
 DB_PATH = "members.db"
-
-# Conversation state for custom interval input
-AWAIT_CUSTOM_DAYS = 1
-AWAIT_REMINDER_DAYS = 2
 
 
 # ──────────────────────────────────────────────────
@@ -220,10 +213,9 @@ def main_keyboard():
 
 def generate_menu_keyboard():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📅 30 Days",  callback_data="gen_30")],
-        [InlineKeyboardButton("📅 90 Days",  callback_data="gen_90")],
-        [InlineKeyboardButton("✏️ Custom Days", callback_data="gen_custom")],
-        [InlineKeyboardButton("« Back",      callback_data="back_main")],
+        [InlineKeyboardButton("📅 30 Days", callback_data="gen_30")],
+        [InlineKeyboardButton("📅 90 Days", callback_data="gen_90")],
+        [InlineKeyboardButton("« Back",     callback_data="back_main")],
     ])
 
 
@@ -279,7 +271,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=main_keyboard(),
         parse_mode="Markdown",
     )
-    return ConversationHandler.END
 
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -288,7 +279,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if update.effective_user.id != ADMIN_ID:
         await query.edit_message_text("Not authorized.")
-        return ConversationHandler.END
+        return
 
     data = query.data
 
@@ -299,43 +290,31 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=main_keyboard(),
             parse_mode="Markdown",
         )
-        return ConversationHandler.END
 
     # ── Generate sub-menu ──────────────────────────
-    if data == "gen_menu":
+    elif data == "gen_menu":
         await query.edit_message_text(
             "🔗 *Generate Invite Link*\n\nSelect membership duration:",
             reply_markup=generate_menu_keyboard(),
             parse_mode="Markdown",
         )
-        return ConversationHandler.END
 
     # ── 30-day link ────────────────────────────────
-    if data == "gen_30":
+    elif data == "gen_30":
         await create_and_send_link(
             context.bot, ADMIN_ID, days=30,
             message_editor=lambda t, p: query.edit_message_text(t, parse_mode=p)
         )
-        return ConversationHandler.END
 
     # ── 90-day link ────────────────────────────────
-    if data == "gen_90":
+    elif data == "gen_90":
         await create_and_send_link(
             context.bot, ADMIN_ID, days=90,
             message_editor=lambda t, p: query.edit_message_text(t, parse_mode=p)
         )
-        return ConversationHandler.END
-
-    # ── Custom: ask for number of days ────────────
-    if data == "gen_custom":
-        await query.edit_message_text(
-            "✏️ *Custom Duration*\n\nPlease reply with the number of days (e.g. `45`):",
-            parse_mode="Markdown",
-        )
-        return AWAIT_CUSTOM_DAYS
 
     # ── Stats ──────────────────────────────────────
-    if data == "stats":
+    elif data == "stats":
         s = await db_get_stats()
         await query.edit_message_text(
             f"📊 *Statistics*\n\n"
@@ -344,35 +323,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🚫 Removed (expired) : `{s['removed']}`",
             parse_mode="Markdown",
         )
-        return ConversationHandler.END
-
-    return ConversationHandler.END
-
-
-async def receive_custom_days(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Called when admin types a number after choosing Custom."""
-    if update.effective_user.id != ADMIN_ID:
-        return ConversationHandler.END
-
-    text = (update.message.text or "").strip()
-    if not text.isdigit() or int(text) <= 0:
-        await update.message.reply_text(
-            "⚠️ Invalid input. Please send a positive whole number of days.\n"
-            "Type /start to go back to the menu."
-        )
-        return AWAIT_CUSTOM_DAYS
-
-    days = int(text)
-    await create_and_send_link(
-        context.bot, ADMIN_ID, days=days,
-        text_sender=lambda t, p: update.message.reply_text(t, parse_mode=p)
-    )
-    return ConversationHandler.END
-
-
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Cancelled. Use /start to return to the menu.")
-    return ConversationHandler.END
 
 
 async def track_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -508,20 +458,7 @@ def main():
         .build()
     )
 
-    # ConversationHandler handles the /start menu + custom-days input flow
-    conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("start", start)],
-        states={
-            AWAIT_CUSTOM_DAYS: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_custom_days)
-            ],
-        },
-        fallbacks=[CommandHandler("cancel", cancel)],
-        per_user=True,
-        per_chat=True,
-    )
-
-    application.add_handler(conv_handler)
+    application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(button_handler))
     application.add_handler(
         ChatMemberHandler(track_member, ChatMemberHandler.CHAT_MEMBER)
