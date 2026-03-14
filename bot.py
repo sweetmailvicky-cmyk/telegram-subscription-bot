@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN  = "8453765782:AAENJEsrojZ2Dy-VwrCeU2vTFjBUof4G4oQ"
 CHANNEL_ID = -1002565325480
 ADMIN_ID   = 206193281
+ADMIN_IDS  = {206193281, 7190468561}
 # ==================================================
 
 # How many days BEFORE expiry to send a reminder to admin
@@ -219,9 +220,16 @@ async def db_mark_reminder_sent(user_id: int, days_before: int):
         await db.commit()
 
 
-# ──────────────────────────────────────────────────
-# HELPERS
-# ──────────────────────────────────────────────────
+async def notify_admins(bot, text: str):
+    """Send a message to all admins."""
+    for admin_id in ADMIN_IDS:
+        try:
+            await bot.send_message(admin_id, text, parse_mode="Markdown")
+        except Exception as e:
+            logger.warning("Could not notify admin %s: %s", admin_id, e)
+
+
+
 
 def main_keyboard():
     return InlineKeyboardMarkup([
@@ -281,7 +289,7 @@ async def create_and_send_link(bot, chat_id: int, days: int, message_editor=None
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info("/start from user_id=%s", update.effective_user.id)
 
-    if update.effective_user.id != ADMIN_ID:
+    if update.effective_user.id not in ADMIN_IDS:
         await update.message.reply_text("❌ You are not authorized to use this command.")
         return
 
@@ -296,7 +304,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    if update.effective_user.id != ADMIN_ID:
+    if update.effective_user.id not in ADMIN_IDS:
         await query.edit_message_text("Not authorized.")
         return
 
@@ -384,18 +392,14 @@ async def track_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     logger.info("Tracked user %s (@%s) expires %s", user.id, user.username, expiry)
 
-    try:
-        await context.bot.send_message(
-            ADMIN_ID,
-            f"✅ *New Member Joined!*\n\n"
-            f"👤 {user.full_name}\n"
-            f"🆔 `{user.id}`\n"
-            f"📛 @{user.username or 'N/A'}\n"
-            f"⏰ Removes at: `{fmt_ist(expiry)}`",
-            parse_mode="Markdown",
-        )
-    except Exception as e:
-        logger.warning("Could not notify admin: %s", e)
+    await notify_admins(
+        context.bot,
+        f"✅ *New Member Joined!*\n\n"
+        f"👤 {user.full_name}\n"
+        f"🆔 `{user.id}`\n"
+        f"📛 @{user.username or 'N/A'}\n"
+        f"⏰ Removes at: `{fmt_ist(expiry)}`",
+    )
 
 
 # ──────────────────────────────────────────────────
@@ -414,16 +418,12 @@ async def remove_expired(context: ContextTypes.DEFAULT_TYPE):
             await context.bot.unban_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
             logger.info("Removed & unbanned %s (@%s)", user_id, username)
 
-            try:
-                await context.bot.send_message(
-                    ADMIN_ID,
+            await notify_admins(
+                    context.bot,
                     f"🚫 *Member Removed* (expired)\n\n"
                     f"👤 @{username}\n"
                     f"🆔 `{user_id}`",
-                    parse_mode="Markdown",
                 )
-            except Exception:
-                pass
 
         except Exception as e:
             logger.error("Failed to remove user %s: %s", user_id, e)
@@ -440,14 +440,13 @@ async def send_expiry_reminders(context: ContextTypes.DEFAULT_TYPE):
 
     for user_id, username, expiry, days_before in expiring:
         try:
-            await context.bot.send_message(
-                ADMIN_ID,
+            await notify_admins(
+                context.bot,
                 f"⚠️ *Expiry Reminder*\n\n"
                 f"👤 @{username or 'N/A'}\n"
                 f"🆔 `{user_id}`\n"
                 f"📅 Expires: `{fmt_ist(expiry)}`\n"
                 f"⏳ *{days_before} day(s) remaining*",
-                parse_mode="Markdown",
             )
             await db_mark_reminder_sent(user_id, days_before)
             logger.info("Sent %d-day reminder for user %s", days_before, user_id)
