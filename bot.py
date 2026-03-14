@@ -12,6 +12,9 @@ from telegram.ext import (
     ContextTypes,
     CallbackQueryHandler,
     ChatMemberHandler,
+    ConversationHandler,
+    MessageHandler,
+    filters,
 )
 
 # ==================================================
@@ -31,7 +34,14 @@ CHANNEL_ID = -1002565325480
 ADMIN_ID   = 206193281
 # ==================================================
 
+# How many days BEFORE expiry to send a reminder to admin
+REMINDER_DAYS_BEFORE = [3, 1]  # Sends reminder 3 days before AND 1 day before
+
 DB_PATH = "members.db"
+
+# Conversation state for custom interval input
+AWAIT_CUSTOM_DAYS = 1
+AWAIT_REMINDER_DAYS = 2
 
 
 # ──────────────────────────────────────────────────
@@ -60,6 +70,15 @@ async def init_db():
             CREATE TABLE IF NOT EXISTS stats (
                 key   TEXT PRIMARY KEY,
                 value INTEGER DEFAULT 0
+            )
+        """)
+        # New table: tracks which reminders have already been sent
+        # so we don't spam the admin on every 60-second tick
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS reminders_sent (
+                user_id     INTEGER,
+                days_before INTEGER,
+                PRIMARY KEY (user_id, days_before)
             )
         """)
         await db.execute(
@@ -107,6 +126,8 @@ async def db_add_user(user_id: int, username: str, expiry: datetime):
         await db.execute(
             "UPDATE stats SET value=value+1 WHERE key='total_joins'"
         )
+        # Clear any prior reminders for this user (fresh join = fresh state)
+        await db.execute("DELETE FROM reminders_sent WHERE user_id=?", (user_id,))
         await db.commit()
 
 
@@ -145,6 +166,103 @@ async def db_get_stats() -> dict:
     return {"active": active, "total": total, "removed": removed}
 
 
+async def db_get_users_expiring_soon():
+    """
+    Returns active users whose expiry falls within the next REMINDER_DAYS_BEFORE window,
+    along with how many days are left (approximate).
+    """
+    now = datetime.now()
+    results = []
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT user_id, username, expiry FROM users WHERE removed=0"
+        ) as cur:
+            rows = await cur.fetchall()
+
+        for user_id, username, expiry_str in rows:
+            expiry = datetime.strptime(expiry_str, "%Y-%m-%d %H:%M:%S")
+            days_left = (expiry - now).days  # integer floor
+
+            for days_before in REMINDER_DAYS_BEFORE:
+                if days_left == days_before:
+                    # Check if we already sent this reminder
+                    async with db.execute(
+                        "SELECT 1 FROM reminders_sent WHERE user_id=? AND days_before=?",
+                        (user_id, days_before)
+                    ) as cur2:
+                        already_sent = await cur2.fetchone()
+
+                    if not already_sent:
+                        results.append((user_id, username, expiry, days_before))
+
+    return results
+
+
+async def db_mark_reminder_sent(user_id: int, days_before: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT OR IGNORE INTO reminders_sent(user_id, days_before) VALUES(?,?)",
+            (user_id, days_before)
+        )
+        await db.commit()
+
+
+# ──────────────────────────────────────────────────
+# HELPERS
+# ──────────────────────────────────────────────────
+
+def main_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔗 Generate Invite Link", callback_data="gen_menu")],
+        [InlineKeyboardButton("📊 View Stats",            callback_data="stats")],
+    ])
+
+
+def generate_menu_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📅 30 Days",  callback_data="gen_30")],
+        [InlineKeyboardButton("📅 90 Days",  callback_data="gen_90")],
+        [InlineKeyboardButton("✏️ Custom Days", callback_data="gen_custom")],
+        [InlineKeyboardButton("« Back",      callback_data="back_main")],
+    ])
+
+
+async def create_and_send_link(bot, chat_id: int, days: int, message_editor=None, text_sender=None):
+    """
+    Creates a Telegram invite link valid for `days` days (single-use).
+    - message_editor: async callable(text, parse_mode) — used when editing an existing message
+    - text_sender:    async callable(text, parse_mode) — used when sending a new message
+    """
+    expire_date = datetime.now() + timedelta(days=days)
+    try:
+        link_obj = await bot.create_chat_invite_link(
+            chat_id=CHANNEL_ID,
+            member_limit=1,
+            expire_date=expire_date,
+        )
+    except Exception as e:
+        logger.error("Failed to create invite link: %s", e)
+        msg = f"❌ Failed to create link.\n\n`{e}`\n\nMake sure the bot is admin in the channel."
+        if message_editor:
+            await message_editor(msg, "Markdown")
+        else:
+            await text_sender(msg, "Markdown")
+        return
+
+    await db_add_link(link_obj.invite_link, expire_date)
+
+    reply = (
+        f"✅ *Invite Link — {days} Day(s)*\n\n"
+        f"`{link_obj.invite_link}`\n\n"
+        f"⏰ Expires: `{expire_date.strftime('%Y-%m-%d %H:%M:%S')}`\n"
+        f"👤 Single-use only"
+    )
+    if message_editor:
+        await message_editor(reply, "Markdown")
+    else:
+        await text_sender(reply, "Markdown")
+
+
 # ──────────────────────────────────────────────────
 # HANDLERS
 # ──────────────────────────────────────────────────
@@ -156,15 +274,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ You are not authorized to use this command.")
         return
 
-    keyboard = [
-        [InlineKeyboardButton("🔗 Generate 30-Min Invite Link", callback_data="generate")],
-        [InlineKeyboardButton("📊 View Stats", callback_data="stats")],
-    ]
     await update.message.reply_text(
         "👋 *Admin Panel* — Choose an option:",
-        reply_markup=InlineKeyboardMarkup(keyboard),
+        reply_markup=main_keyboard(),
         parse_mode="Markdown",
     )
+    return ConversationHandler.END
 
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -173,35 +288,54 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if update.effective_user.id != ADMIN_ID:
         await query.edit_message_text("Not authorized.")
-        return
+        return ConversationHandler.END
 
-    if query.data == "generate":
-        expire_date = datetime.now() + timedelta(minutes=30)
-        try:
-            link_obj = await context.bot.create_chat_invite_link(
-                chat_id=CHANNEL_ID,
-                member_limit=1,
-                expire_date=expire_date,
-            )
-        except Exception as e:
-            logger.error("Failed to create invite link: %s", e)
-            await query.edit_message_text(
-                f"❌ Failed to create link.\n\n`{e}`\n\nMake sure the bot is admin in the channel.",
-                parse_mode="Markdown"
-            )
-            return
+    data = query.data
 
-        await db_add_link(link_obj.invite_link, expire_date)
-
+    # ── Main menu ──────────────────────────────────
+    if data == "back_main":
         await query.edit_message_text(
-            f"✅ *30-Minute Invite Link*\n\n"
-            f"`{link_obj.invite_link}`\n\n"
-            f"⏰ Expires: `{expire_date.strftime('%Y-%m-%d %H:%M:%S')}`\n"
-            f"👤 Single-use only",
+            "👋 *Admin Panel* — Choose an option:",
+            reply_markup=main_keyboard(),
             parse_mode="Markdown",
         )
+        return ConversationHandler.END
 
-    elif query.data == "stats":
+    # ── Generate sub-menu ──────────────────────────
+    if data == "gen_menu":
+        await query.edit_message_text(
+            "🔗 *Generate Invite Link*\n\nSelect membership duration:",
+            reply_markup=generate_menu_keyboard(),
+            parse_mode="Markdown",
+        )
+        return ConversationHandler.END
+
+    # ── 30-day link ────────────────────────────────
+    if data == "gen_30":
+        await create_and_send_link(
+            context.bot, ADMIN_ID, days=30,
+            message_editor=lambda t, p: query.edit_message_text(t, parse_mode=p)
+        )
+        return ConversationHandler.END
+
+    # ── 90-day link ────────────────────────────────
+    if data == "gen_90":
+        await create_and_send_link(
+            context.bot, ADMIN_ID, days=90,
+            message_editor=lambda t, p: query.edit_message_text(t, parse_mode=p)
+        )
+        return ConversationHandler.END
+
+    # ── Custom: ask for number of days ────────────
+    if data == "gen_custom":
+        await query.edit_message_text(
+            "✏️ *Custom Duration*\n\nPlease reply with the number of days (e.g. `45`):",
+            parse_mode="Markdown",
+        )
+        return AWAIT_CUSTOM_DAYS
+
+    # ── Stats ──────────────────────────────────────
+    if data == "stats":
         s = await db_get_stats()
         await query.edit_message_text(
             f"📊 *Statistics*\n\n"
@@ -210,6 +344,35 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🚫 Removed (expired) : `{s['removed']}`",
             parse_mode="Markdown",
         )
+        return ConversationHandler.END
+
+    return ConversationHandler.END
+
+
+async def receive_custom_days(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Called when admin types a number after choosing Custom."""
+    if update.effective_user.id != ADMIN_ID:
+        return ConversationHandler.END
+
+    text = (update.message.text or "").strip()
+    if not text.isdigit() or int(text) <= 0:
+        await update.message.reply_text(
+            "⚠️ Invalid input. Please send a positive whole number of days.\n"
+            "Type /start to go back to the menu."
+        )
+        return AWAIT_CUSTOM_DAYS
+
+    days = int(text)
+    await create_and_send_link(
+        context.bot, ADMIN_ID, days=days,
+        text_sender=lambda t, p: update.message.reply_text(t, parse_mode=p)
+    )
+    return ConversationHandler.END
+
+
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Cancelled. Use /start to return to the menu.")
+    return ConversationHandler.END
 
 
 async def track_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -233,7 +396,19 @@ async def track_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     user   = new.user
-    expiry = datetime.now() + timedelta(minutes=30)
+    # Determine expiry based on the link's own expiry stored in DB
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT expire_date FROM links WHERE invite_link=?", (link_str,)
+        ) as cur:
+            row = await cur.fetchone()
+
+    if row:
+        # Use the link's expiry as the member's membership expiry
+        expiry = datetime.strptime(row[0], "%Y-%m-%d %H:%M:%S")
+    else:
+        # Fallback: shouldn't happen, but default to 30 days
+        expiry = datetime.now() + timedelta(days=30)
 
     await db_add_user(user.id, user.username, expiry)
     await db_remove_link(link_str)
@@ -253,6 +428,10 @@ async def track_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.warning("Could not notify admin: %s", e)
 
+
+# ──────────────────────────────────────────────────
+# SCHEDULED JOBS
+# ──────────────────────────────────────────────────
 
 async def remove_expired(context: ContextTypes.DEFAULT_TYPE):
     expired = await db_get_expired_users()
@@ -283,8 +462,32 @@ async def remove_expired(context: ContextTypes.DEFAULT_TYPE):
         await db_mark_removed(user_id)
 
 
+async def send_expiry_reminders(context: ContextTypes.DEFAULT_TYPE):
+    """
+    Runs every hour. Sends admin a reminder for each member who will
+    expire in exactly REMINDER_DAYS_BEFORE days (once per threshold).
+    """
+    expiring = await db_get_users_expiring_soon()
+
+    for user_id, username, expiry, days_before in expiring:
+        try:
+            await context.bot.send_message(
+                ADMIN_ID,
+                f"⚠️ *Expiry Reminder*\n\n"
+                f"👤 @{username or 'N/A'}\n"
+                f"🆔 `{user_id}`\n"
+                f"📅 Expires: `{expiry.strftime('%Y-%m-%d %H:%M:%S')}`\n"
+                f"⏳ *{days_before} day(s) remaining*",
+                parse_mode="Markdown",
+            )
+            await db_mark_reminder_sent(user_id, days_before)
+            logger.info("Sent %d-day reminder for user %s", days_before, user_id)
+        except Exception as e:
+            logger.warning("Could not send reminder for user %s: %s", user_id, e)
+
+
 # ──────────────────────────────────────────────────
-# POST INIT — runs inside the event loop safely
+# POST INIT
 # ──────────────────────────────────────────────────
 
 async def post_init(application):
@@ -305,13 +508,30 @@ def main():
         .build()
     )
 
-    application.add_handler(CommandHandler("start", start))
+    # ConversationHandler handles the /start menu + custom-days input flow
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("start", start)],
+        states={
+            AWAIT_CUSTOM_DAYS: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_custom_days)
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+        per_user=True,
+        per_chat=True,
+    )
+
+    application.add_handler(conv_handler)
     application.add_handler(CallbackQueryHandler(button_handler))
     application.add_handler(
         ChatMemberHandler(track_member, ChatMemberHandler.CHAT_MEMBER)
     )
 
+    # Existing job: remove expired every 60 seconds
     application.job_queue.run_repeating(remove_expired, interval=60, first=10)
+
+    # New job: check for upcoming expiries every hour
+    application.job_queue.run_repeating(send_expiry_reminders, interval=3600, first=30)
 
     application.run_polling(
         allowed_updates=[
@@ -326,4 +546,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
